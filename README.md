@@ -143,11 +143,3 @@ prephub/
             ├── elasticsearch/questions-settings.json
             └── db/migration/  # Flyway migrations
 ```
-
-## Next Steps
-
-1. **Build the frontend** — React + Vite + TypeScript + Tailwind. The three-column layout from the architecture diagram.
-2. **Add the `AnswerService` + controller** — currently entities and repo exist; service is left as a small exercise.
-3. **Wire SSE or WebSocket** — for live counter updates on questions when others like/comment.
-4. **Add semantic search later** — your 12GB GPU can run a small embedding model (e.g., `bge-small-en`) and store vectors in Postgres via `pgvector`. Then your search becomes hybrid: keyword + semantic.
-5. **Scheduled re-indexing job** — for resilience if ES gets out of sync.
