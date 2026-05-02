@@ -27,3 +27,6 @@ Thumbs.db
 
 # Docker volumes (if mounted locally)
 docker/data/
+
+# Node
+node_modules/
