@@ -53,7 +53,7 @@ export function HomePage() {
         )}
 
         <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-          {topicSlug ? `${topic?.name || topicSlug} Questions` : "Latest Questions"}
+          {topicSlug ? `${topic?.name || topicSlug} Questions` : "Latest Topics"}
         </h2>
 
         {isLoading && Array.from({ length: 6 }).map((_, i) => (
