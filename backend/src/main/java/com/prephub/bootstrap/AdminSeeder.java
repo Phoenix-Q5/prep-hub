@@ -38,8 +38,10 @@ public class AdminSeeder {
                 .username(adminUsername).email(adminEmail)
                 .passwordHash(encoder.encode(adminPassword))
                 .displayName("Admin").role(Role.ADMIN).enabled(true).build();
-        users.save(admin);
-        portfolios.save(Portfolio.builder().userId(admin.getId()).user(admin).build());
+        admin = users.saveAndFlush(admin);
+        Portfolio portfolio = new Portfolio();
+        portfolio.setUser(admin);
+        portfolios.save(portfolio);
         log.warn("Bootstrapped admin user '{}' with password '{}' — change immediately in production",
                 adminUsername, adminPassword);
     }

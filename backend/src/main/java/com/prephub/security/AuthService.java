@@ -44,9 +44,11 @@ public class AuthService {
                 .role(Role.USER)
                 .enabled(true)
                 .build();
-        users.save(user);
+            user = users.saveAndFlush(user);
 
-        portfolios.save(Portfolio.builder().userId(user.getId()).user(user).build());
+            Portfolio portfolio = new Portfolio();
+            portfolio.setUser(user);
+            portfolios.save(portfolio);
 
         return buildAuth(user);
     }
