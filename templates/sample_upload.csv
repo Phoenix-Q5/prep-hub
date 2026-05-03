@@ -1,0 +1,6 @@
+title,content,topic_slug,difficulty,tags,author_username
+"What is the difference between HashMap and HashTable?","Explain the key differences in terms of synchronization, null handling, and performance.",java,MEDIUM,"collections, concurrency, hashmap",
+"Explain Spring Boot auto-configuration","How does @SpringBootApplication trigger auto-configuration? Walk through the mechanism.",spring-boot,HARD,"spring, autoconfiguration, annotations",
+"What is a Binary Search Tree?","Describe BST properties, insertion, deletion, and time complexity analysis.",dsa,EASY,"trees, binary-search, data-structures",
+"Design a URL shortener like bit.ly","Walk through functional requirements, API design, database schema, and scalability.",system-design,HARD,"url-shortener, hashing, scalability",
+"Explain INNER JOIN vs LEFT JOIN","Describe how each works with examples and performance implications.",sql,EASY,"joins, relational, query-optimization",

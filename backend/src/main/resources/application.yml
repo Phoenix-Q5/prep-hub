@@ -51,8 +51,8 @@ spring:
 
   servlet:
     multipart:
-      max-file-size: 5MB
-      max-request-size: 5MB
+      max-file-size: 20MB
+      max-request-size: 25MB
 
 server:
   port: 8080
@@ -108,6 +108,8 @@ app:
   cache:
     search-ttl-seconds: 60
     hot-topics-ttl-seconds: 300
+  embedding:
+    url: ${EMBEDDING_SERVICE_URL:http://localhost:8000}
 
 springdoc:
   swagger-ui:

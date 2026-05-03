@@ -1,0 +1,42 @@
+[
+  {
+    "title": "What is the difference between HashMap and HashTable?",
+    "content": "Explain the key differences between HashMap and HashTable in Java. Cover aspects like synchronization, null key/value handling, performance characteristics, and when to use each one. Also mention ConcurrentHashMap as a modern alternative.",
+    "topicSlug": "java",
+    "difficulty": "MEDIUM",
+    "tags": "collections, concurrency, hashmap",
+    "authorUsername": ""
+  },
+  {
+    "title": "Explain Spring Boot auto-configuration mechanism",
+    "content": "How does Spring Boot auto-configuration work under the hood? Walk through the role of @SpringBootApplication, @EnableAutoConfiguration, spring.factories / AutoConfiguration.imports, and conditional annotations like @ConditionalOnClass.",
+    "topicSlug": "spring-boot",
+    "difficulty": "HARD",
+    "tags": "spring, autoconfiguration, annotations",
+    "authorUsername": ""
+  },
+  {
+    "title": "What is a Binary Search Tree?",
+    "content": "Describe the properties of a Binary Search Tree (BST). Cover insertion, deletion, search operations, and their time complexities. Explain the difference between balanced and unbalanced BSTs, and mention self-balancing variants like AVL and Red-Black trees.",
+    "topicSlug": "dsa",
+    "difficulty": "EASY",
+    "tags": "trees, binary-search, data-structures",
+    "authorUsername": ""
+  },
+  {
+    "title": "Design a URL shortener like bit.ly",
+    "content": "Walk through the system design of a URL shortening service. Cover: functional requirements, API design, database schema, hash/ID generation strategies (base62, MD5 truncation), read-heavy optimization, caching layer, analytics tracking, and scalability considerations.",
+    "topicSlug": "system-design",
+    "difficulty": "HARD",
+    "tags": "url-shortener, hashing, caching, scalability",
+    "authorUsername": ""
+  },
+  {
+    "title": "Explain the difference between INNER JOIN and LEFT JOIN",
+    "content": "Describe how INNER JOIN and LEFT JOIN work in SQL with examples. When would you use each? Include a visual representation and discuss performance implications with large tables.",
+    "topicSlug": "sql",
+    "difficulty": "EASY",
+    "tags": "joins, relational, query-optimization",
+    "authorUsername": ""
+  }
+]
