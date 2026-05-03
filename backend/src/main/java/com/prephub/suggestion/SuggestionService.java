@@ -1,10 +1,12 @@
 package com.prephub.suggestion;
 
-import com.prephub.common.*;
+import com.prephub.common.ConflictException;
+import com.prephub.common.Difficulty;
+import com.prephub.common.NotFoundException;
+import com.prephub.common.QuestionStatus;
+import com.prephub.common.SuggestionStatus;
 import com.prephub.question.Question;
-import com.prephub.question.QuestionDtos;
 import com.prephub.question.QuestionRepository;
-import com.prephub.question.QuestionService;
 import com.prephub.search.SearchIndexer;
 import com.prephub.topic.Topic;
 import com.prephub.topic.TopicRepository;
@@ -14,7 +16,6 @@ import com.prephub.user.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;

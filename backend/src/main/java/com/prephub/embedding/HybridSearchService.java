@@ -1,6 +1,5 @@
 package com.prephub.embedding;
 
-import com.prephub.common.NotFoundException;
 import com.prephub.question.Question;
 import com.prephub.question.QuestionRepository;
 import com.prephub.search.SearchDtos;
@@ -10,7 +9,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**

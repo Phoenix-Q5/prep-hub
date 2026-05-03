@@ -1,6 +1,9 @@
 package com.prephub.question;
 
-import com.prephub.common.*;
+import com.prephub.common.Difficulty;
+import com.prephub.common.ForbiddenException;
+import com.prephub.common.NotFoundException;
+import com.prephub.common.QuestionStatus;
 import com.prephub.search.SearchIndexer;
 import com.prephub.topic.Topic;
 import com.prephub.topic.TopicRepository;
