@@ -11,8 +11,32 @@ export interface DashboardStats {
 export interface BulkUploadResult {
   totalRows: number;
   successCount: number;
+  skippedDuplicates: number;
   errorCount: number;
   errors: { row: number; title: string; error: string }[];
+}
+
+export interface ValidationResult {
+  totalRows: number;
+  validRows: number;
+  duplicateRows: number;
+  unknownTopics: string[];
+  availableTopics: string[];
+  duplicateTitles: string[];
+  errors: { row: number; title: string; error: string }[];
+}
+
+export interface CreateTopicRequest {
+  name: string;
+  slug: string;
+  description?: string;
+  colorHex?: string;
+  featured?: boolean;
+}
+
+export interface BatchCreateTopicsResult {
+  created: number;
+  slugs: string[];
 }
 
 export interface AdminUser {
@@ -28,6 +52,14 @@ export interface AdminUser {
 export const adminApi = {
   // Dashboard
   stats: () => api.get<DashboardStats>("/api/admin/stats").then((r) => r.data),
+
+  // Validation (pre-upload check)
+  validateJson: (questions: unknown[]) =>
+    api.post<ValidationResult>("/api/admin/upload/validate", { questions }).then((r) => r.data),
+
+  // Batch topic creation
+  batchCreateTopics: (topics: CreateTopicRequest[]) =>
+    api.post<BatchCreateTopicsResult>("/api/admin/topics/batch", { topics }).then((r) => r.data),
 
   // Bulk upload
   uploadJson: (questions: unknown[]) =>

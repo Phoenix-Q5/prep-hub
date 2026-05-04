@@ -20,6 +20,11 @@ public interface QuestionRepository extends JpaRepository<Question, UUID> {
     Page<Question> findByTopicIdAndStatus(UUID topicId, QuestionStatus status, Pageable pageable);
     Page<Question> findByAuthorId(UUID authorId, Pageable pageable);
 
+    boolean existsByTitleIgnoreCase(String title);
+
+    @Query("SELECT LOWER(q.title) FROM Question q WHERE LOWER(q.title) IN :titles")
+    List<String> findExistingTitles(@Param("titles") List<String> lowerCaseTitles);
+
     @Query("SELECT q FROM Question q WHERE q.status = 'PUBLISHED' AND q.createdAt >= :since ORDER BY q.likeCount DESC, q.viewCount DESC")
     List<Question> findHotSince(@Param("since") Instant since, Pageable pageable);
 

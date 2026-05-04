@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { adminApi, type BulkUploadResult, type DashboardStats, type AdminUser } from "@/api/admin";
+import { adminApi, type BulkUploadResult, type ValidationResult, type CreateTopicRequest, type DashboardStats, type AdminUser } from "@/api/admin";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,7 +13,7 @@ import {
   LayoutDashboard, Upload, MessageSquare, Users, Download,
   FileSpreadsheet, FileJson, FileText, Check, X, AlertCircle,
   ChevronLeft, ChevronRight, Shield, ShieldOff, UserCog,
-  CheckCircle2, XCircle, Loader2,
+  CheckCircle2, XCircle, Loader2, Search,
 } from "lucide-react";
 
 type Tab = "dashboard" | "upload" | "suggestions" | "users";
@@ -107,62 +107,103 @@ function DashboardTab() {
 }
 
 // ═══════════════════════════════════════════════════════════
-// Bulk Upload Tab
+// Bulk Upload Tab — with validation, unknown topic resolution, and duplicate detection
 // ═══════════════════════════════════════════════════════════
 
+type UploadStep = "select" | "validating" | "review" | "uploading" | "done";
+
 function BulkUploadTab() {
-  const [dragActive, setDragActive] = useState(false);
+  const [step, setStep] = useState<UploadStep>("select");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [jsonText, setJsonText] = useState("");
   const [uploadMode, setUploadMode] = useState<"file" | "json">("file");
+  const [dragActive, setDragActive] = useState(false);
+  const [parsedQuestions, setParsedQuestions] = useState<unknown[]>([]);
+  const [validation, setValidation] = useState<ValidationResult | null>(null);
   const [result, setResult] = useState<BulkUploadResult | null>(null);
+  const [topicForms, setTopicForms] = useState<Record<string, CreateTopicRequest>>({});
   const qc = useQueryClient();
 
-  const fileMutation = useMutation({
-    mutationFn: async (file: File) => {
-      const ext = file.name.split(".").pop()?.toLowerCase();
-      const format = ext === "xlsx" ? "excel" : ext === "csv" ? "csv" : "json-file";
-      return adminApi.uploadFile(file, format as "json-file" | "csv" | "excel");
+  // ── Parse file to JSON ──────────────────────────────
+  const parseFile = async (file: File): Promise<unknown[]> => {
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+    return Array.isArray(parsed) ? parsed : parsed.questions || [];
+  };
+
+  // ── Step 1: Validate ────────────────────────────────
+  const validateMut = useMutation({
+    mutationFn: async () => {
+      let questions: unknown[];
+      if (uploadMode === "file" && selectedFile) {
+        questions = await parseFile(selectedFile);
+      } else {
+        const parsed = JSON.parse(jsonText);
+        questions = Array.isArray(parsed) ? parsed : parsed.questions || [];
+      }
+      setParsedQuestions(questions);
+      return adminApi.validateJson(questions);
     },
     onSuccess: (data) => {
+      setValidation(data);
+      // Pre-populate topic forms for unknown topics
+      const forms: Record<string, CreateTopicRequest> = {};
+      data.unknownTopics.forEach((slug) => {
+        const name = slug
+          .split("-")
+          .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+          .join(" ");
+        forms[slug] = { name, slug, description: "", colorHex: "#6B7280", featured: false };
+      });
+      setTopicForms(forms);
+      setStep("review");
+    },
+  });
+
+  // ── Step 2: Create missing topics ───────────────────
+  const createTopicsMut = useMutation({
+    mutationFn: () => adminApi.batchCreateTopics(Object.values(topicForms)),
+    onSuccess: () => {
+      // Re-validate to confirm topics are now available
+      adminApi.validateJson(parsedQuestions).then((data) => {
+        setValidation(data);
+        if (data.unknownTopics.length === 0) {
+          setTopicForms({});
+        }
+      });
+      qc.invalidateQueries({ queryKey: ["topics"] });
+    },
+  });
+
+  // ── Step 3: Upload ──────────────────────────────────
+  const uploadMut = useMutation({
+    mutationFn: () => adminApi.uploadJson(parsedQuestions),
+    onSuccess: (data) => {
       setResult(data);
+      setStep("done");
       qc.invalidateQueries({ queryKey: ["admin", "stats"] });
       qc.invalidateQueries({ queryKey: ["questions"] });
     },
   });
-
-  const jsonMutation = useMutation({
-    mutationFn: async (text: string) => {
-      const parsed = JSON.parse(text);
-      const questions = Array.isArray(parsed) ? parsed : parsed.questions || [];
-      return adminApi.uploadJson(questions);
-    },
-    onSuccess: (data) => {
-      setResult(data);
-      qc.invalidateQueries({ queryKey: ["admin", "stats"] });
-      qc.invalidateQueries({ queryKey: ["questions"] });
-    },
-  });
-
-  const isPending = fileMutation.isPending || jsonMutation.isPending;
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setDragActive(false);
     const file = e.dataTransfer.files[0];
-    if (file) {
-      setSelectedFile(file);
-      setResult(null);
-    }
+    if (file) { setSelectedFile(file); setStep("select"); setValidation(null); setResult(null); }
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      setSelectedFile(file);
-      setResult(null);
-    }
+    if (file) { setSelectedFile(file); setStep("select"); setValidation(null); setResult(null); }
   };
+
+  const reset = () => {
+    setStep("select"); setSelectedFile(null); setJsonText(""); setParsedQuestions([]);
+    setValidation(null); setResult(null); setTopicForms({});
+  };
+
+  const unknownTopicsResolved = validation ? validation.unknownTopics.length === 0 : false;
 
   return (
     <div className="space-y-6 max-w-3xl">
@@ -170,25 +211,23 @@ function BulkUploadTab() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Download Templates</CardTitle>
-          <CardDescription>
-            Use these templates as a starting point. Fill in your questions and upload.
-          </CardDescription>
+          <CardDescription>Use these as a starting point for your bulk upload.</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap gap-3">
             <a href="/api/admin/templates/excel" download>
               <Button variant="outline" size="sm">
-                <FileSpreadsheet className="h-4 w-4 mr-2 text-green-600" /> Excel Template (.xlsx)
+                <FileSpreadsheet className="h-4 w-4 mr-2 text-green-600" /> Excel (.xlsx)
               </Button>
             </a>
             <a href="/api/admin/templates/csv" download>
               <Button variant="outline" size="sm">
-                <FileText className="h-4 w-4 mr-2 text-blue-600" /> CSV Template (.csv)
+                <FileText className="h-4 w-4 mr-2 text-blue-600" /> CSV (.csv)
               </Button>
             </a>
             <a href="/api/admin/templates/json" download>
               <Button variant="outline" size="sm">
-                <FileJson className="h-4 w-4 mr-2 text-amber-600" /> JSON Template (.json)
+                <FileJson className="h-4 w-4 mr-2 text-amber-600" /> JSON (.json)
               </Button>
             </a>
           </div>
@@ -196,26 +235,21 @@ function BulkUploadTab() {
       </Card>
 
       {/* Upload mode toggle */}
-      <div className="flex gap-1 p-1 bg-muted rounded-lg w-fit">
-        <button
-          onClick={() => { setUploadMode("file"); setResult(null); }}
-          className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
-            uploadMode === "file" ? "bg-background shadow-sm" : "text-muted-foreground"
-          }`}
-        >
-          File Upload
-        </button>
-        <button
-          onClick={() => { setUploadMode("json"); setResult(null); }}
-          className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
-            uploadMode === "json" ? "bg-background shadow-sm" : "text-muted-foreground"
-          }`}
-        >
-          Paste JSON
-        </button>
+      <div className="flex items-center gap-4">
+        <div className="flex gap-1 p-1 bg-muted rounded-lg">
+          <button onClick={() => { setUploadMode("file"); reset(); }}
+            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${uploadMode === "file" ? "bg-background shadow-sm" : "text-muted-foreground"}`}
+          >File Upload</button>
+          <button onClick={() => { setUploadMode("json"); reset(); }}
+            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${uploadMode === "json" ? "bg-background shadow-sm" : "text-muted-foreground"}`}
+          >Paste JSON</button>
+        </div>
+        {step !== "select" && (
+          <Button variant="ghost" size="sm" onClick={reset}>Start over</Button>
+        )}
       </div>
 
-      {/* File upload */}
+      {/* ── Step 1: Select file / paste JSON ──────────── */}
       {uploadMode === "file" && (
         <Card>
           <CardContent className="p-6">
@@ -223,47 +257,24 @@ function BulkUploadTab() {
               onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
               onDragLeave={() => setDragActive(false)}
               onDrop={handleDrop}
-              className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
-                dragActive ? "border-primary bg-primary/5" : "border-muted-foreground/25"
-              }`}
+              className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${dragActive ? "border-primary bg-primary/5" : "border-muted-foreground/25"}`}
             >
               <Upload className="h-10 w-10 mx-auto mb-3 text-muted-foreground" />
-              <p className="text-sm font-medium mb-1">
-                {selectedFile ? selectedFile.name : "Drop file here or click to browse"}
-              </p>
-              <p className="text-xs text-muted-foreground mb-3">
-                Supports .xlsx, .csv, .json — max 20MB
-              </p>
-              <input
-                type="file"
-                accept=".xlsx,.csv,.json"
-                onChange={handleFileSelect}
-                className="hidden"
-                id="file-upload"
-              />
-              <label htmlFor="file-upload">
-                <Button variant="outline" size="sm" asChild>
-                  <span>Choose File</span>
-                </Button>
-              </label>
+              <p className="text-sm font-medium mb-1">{selectedFile ? selectedFile.name : "Drop file here or click to browse"}</p>
+              <p className="text-xs text-muted-foreground mb-3">Supports .json, .csv, .xlsx — max 20MB</p>
+              <input type="file" accept=".xlsx,.csv,.json" onChange={handleFileSelect} className="hidden" id="file-upload" />
+              <label htmlFor="file-upload"><Button variant="outline" size="sm" asChild><span>Choose File</span></Button></label>
             </div>
-
             {selectedFile && (
               <div className="flex items-center justify-between mt-4 p-3 bg-muted rounded-md">
                 <div className="flex items-center gap-2">
                   <FileSpreadsheet className="h-4 w-4" />
                   <span className="text-sm font-medium">{selectedFile.name}</span>
-                  <span className="text-xs text-muted-foreground">
-                    ({(selectedFile.size / 1024).toFixed(1)} KB)
-                  </span>
+                  <span className="text-xs text-muted-foreground">({(selectedFile.size / 1024).toFixed(1)} KB)</span>
                 </div>
-                <Button
-                  size="sm"
-                  onClick={() => fileMutation.mutate(selectedFile)}
-                  disabled={isPending}
-                >
-                  {isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Upload className="h-4 w-4 mr-1" />}
-                  {isPending ? "Uploading..." : "Upload"}
+                <Button size="sm" onClick={() => validateMut.mutate()} disabled={validateMut.isPending}>
+                  {validateMut.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Search className="h-4 w-4 mr-1" />}
+                  {validateMut.isPending ? "Validating..." : "Validate & Preview"}
                 </Button>
               </div>
             )}
@@ -271,48 +282,155 @@ function BulkUploadTab() {
         </Card>
       )}
 
-      {/* JSON paste */}
       {uploadMode === "json" && (
         <Card>
           <CardContent className="p-6 space-y-4">
-            <Textarea
-              value={jsonText}
-              onChange={(e) => { setJsonText(e.target.value); setResult(null); }}
-              placeholder={`[\n  {\n    "title": "What is polymorphism?",\n    "content": "Explain runtime vs compile-time polymorphism.",\n    "topicSlug": "java",\n    "difficulty": "MEDIUM",\n    "tags": "oop, inheritance"\n  }\n]`}
-              rows={12}
-              className="font-mono text-xs"
-            />
-            <Button
-              onClick={() => jsonMutation.mutate(jsonText)}
-              disabled={isPending || !jsonText.trim()}
-              className="w-full"
-            >
-              {isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Upload className="h-4 w-4 mr-1" />}
-              {isPending ? "Processing..." : "Upload JSON"}
+            <Textarea value={jsonText} onChange={(e) => { setJsonText(e.target.value); setValidation(null); setResult(null); setStep("select"); }}
+              placeholder={`[\n  { "title": "...", "content": "...", "topicSlug": "java", ... }\n]`}
+              rows={10} className="font-mono text-xs" />
+            <Button onClick={() => validateMut.mutate()} disabled={validateMut.isPending || !jsonText.trim()} className="w-full">
+              {validateMut.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Search className="h-4 w-4 mr-1" />}
+              {validateMut.isPending ? "Validating..." : "Validate & Preview"}
             </Button>
           </CardContent>
         </Card>
       )}
 
-      {/* Error from mutation */}
-      {(fileMutation.error || jsonMutation.error) && (
+      {/* Error from validation */}
+      {validateMut.error && (
         <Card className="border-destructive">
           <CardContent className="p-4">
             <div className="flex items-start gap-2 text-destructive">
               <AlertCircle className="h-5 w-5 shrink-0 mt-0.5" />
-              <div>
-                <p className="font-medium">Upload failed</p>
-                <p className="text-sm">
-                  {(fileMutation.error as Error)?.message || (jsonMutation.error as Error)?.message}
-                </p>
-              </div>
+              <div><p className="font-medium">Validation failed</p><p className="text-sm">{(validateMut.error as Error)?.message}</p></div>
             </div>
           </CardContent>
         </Card>
       )}
 
-      {/* Upload result */}
-      {result && <UploadResultCard result={result} />}
+      {/* ── Step 2: Review validation results ─────────── */}
+      {step === "review" && validation && (
+        <div className="space-y-4">
+          {/* Summary */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Validation Results</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-wrap gap-4 text-sm">
+                <span>Total rows: <strong>{validation.totalRows}</strong></span>
+                <span className="text-green-700">Valid: <strong>{validation.validRows}</strong></span>
+                {validation.duplicateRows > 0 && (
+                  <span className="text-amber-700">Duplicates (will skip): <strong>{validation.duplicateRows}</strong></span>
+                )}
+                {validation.unknownTopics.length > 0 && (
+                  <span className="text-red-700">Unknown topics: <strong>{validation.unknownTopics.length}</strong></span>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Unknown topics — create them */}
+          {validation.unknownTopics.length > 0 && (
+            <Card className="border-amber-300">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <AlertCircle className="h-5 w-5 text-amber-600" />
+                  Unknown Topics — Create them to proceed
+                </CardTitle>
+                <CardDescription>
+                  These topic slugs were found in your file but don't exist in the database yet. Fill in the details and create them.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {Object.entries(topicForms).map(([slug, form]) => (
+                  <div key={slug} className="flex flex-wrap items-end gap-3 p-3 bg-muted/50 rounded-md">
+                    <div className="flex-1 min-w-[150px]">
+                      <label className="text-xs text-muted-foreground">Slug</label>
+                      <Input value={form.slug} disabled className="bg-muted text-sm" />
+                    </div>
+                    <div className="flex-1 min-w-[150px]">
+                      <label className="text-xs text-muted-foreground">Display Name</label>
+                      <Input value={form.name} onChange={(e) => setTopicForms((prev) => ({
+                        ...prev, [slug]: { ...prev[slug], name: e.target.value }
+                      }))} className="text-sm" />
+                    </div>
+                    <div className="flex-1 min-w-[200px]">
+                      <label className="text-xs text-muted-foreground">Description</label>
+                      <Input value={form.description || ""} onChange={(e) => setTopicForms((prev) => ({
+                        ...prev, [slug]: { ...prev[slug], description: e.target.value }
+                      }))} placeholder="Short description" className="text-sm" />
+                    </div>
+                    <div className="w-20">
+                      <label className="text-xs text-muted-foreground">Color</label>
+                      <Input type="color" value={form.colorHex || "#6B7280"} onChange={(e) => setTopicForms((prev) => ({
+                        ...prev, [slug]: { ...prev[slug], colorHex: e.target.value }
+                      }))} className="h-9 p-1" />
+                    </div>
+                  </div>
+                ))}
+                <Button onClick={() => createTopicsMut.mutate()} disabled={createTopicsMut.isPending}>
+                  {createTopicsMut.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Check className="h-4 w-4 mr-1" />}
+                  Create {Object.keys(topicForms).length} Topic{Object.keys(topicForms).length > 1 ? "s" : ""} & Re-validate
+                </Button>
+                {createTopicsMut.isSuccess && (
+                  <p className="text-sm text-green-700 flex items-center gap-1">
+                    <CheckCircle2 className="h-4 w-4" /> Topics created. Re-validating...
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Duplicate warnings */}
+          {validation.duplicateRows > 0 && (
+            <Card className="border-blue-200">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <AlertCircle className="h-5 w-5 text-blue-500" />
+                  {validation.duplicateRows} Duplicate{validation.duplicateRows > 1 ? "s" : ""} Found — will be skipped
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="max-h-40 overflow-y-auto space-y-1">
+                  {validation.duplicateTitles.map((title, i) => (
+                    <p key={i} className="text-sm text-muted-foreground">• {title}</p>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Proceed to upload */}
+          <Button
+            className="w-full"
+            size="lg"
+            onClick={() => { setStep("uploading"); uploadMut.mutate(); }}
+            disabled={!unknownTopicsResolved || uploadMut.isPending}
+          >
+            {uploadMut.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Upload className="h-4 w-4 mr-2" />}
+            {!unknownTopicsResolved
+              ? "Resolve unknown topics first"
+              : `Upload ${validation.validRows} question${validation.validRows !== 1 ? "s" : ""}${validation.duplicateRows > 0 ? ` (skipping ${validation.duplicateRows} duplicates)` : ""}`
+            }
+          </Button>
+        </div>
+      )}
+
+      {/* Error from upload */}
+      {uploadMut.error && (
+        <Card className="border-destructive">
+          <CardContent className="p-4">
+            <div className="flex items-start gap-2 text-destructive">
+              <AlertCircle className="h-5 w-5 shrink-0 mt-0.5" />
+              <div><p className="font-medium">Upload failed</p><p className="text-sm">{(uploadMut.error as Error)?.message}</p></div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Step 3: Upload result ─────────────────────── */}
+      {step === "done" && result && <UploadResultCard result={result} />}
     </div>
   );
 }
@@ -324,23 +442,21 @@ function UploadResultCard({ result }: { result: BulkUploadResult }) {
     <Card className={isFullSuccess ? "border-green-300" : "border-amber-300"}>
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2">
-          {isFullSuccess ? (
-            <CheckCircle2 className="h-5 w-5 text-green-600" />
-          ) : (
-            <AlertCircle className="h-5 w-5 text-amber-600" />
-          )}
+          {isFullSuccess ? <CheckCircle2 className="h-5 w-5 text-green-600" /> : <AlertCircle className="h-5 w-5 text-amber-600" />}
           Upload {isFullSuccess ? "Complete" : "Completed with Errors"}
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="flex gap-6 text-sm mb-3">
-          <span>Total rows: <strong>{result.totalRows}</strong></span>
+        <div className="flex flex-wrap gap-6 text-sm mb-3">
+          <span>Total: <strong>{result.totalRows}</strong></span>
           <span className="text-green-700">Imported: <strong>{result.successCount}</strong></span>
+          {result.skippedDuplicates > 0 && (
+            <span className="text-blue-700">Skipped (duplicates): <strong>{result.skippedDuplicates}</strong></span>
+          )}
           {result.errorCount > 0 && (
             <span className="text-red-700">Errors: <strong>{result.errorCount}</strong></span>
           )}
         </div>
-
         {result.errors.length > 0 && (
           <div className="mt-3 space-y-1 max-h-48 overflow-y-auto">
             {result.errors.map((err, i) => (

@@ -2,6 +2,8 @@ package com.prephub.admin;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.prephub.answer.Answer;
+import com.prephub.answer.AnswerRepository;
 import com.prephub.common.Difficulty;
 import com.prephub.common.QuestionStatus;
 import com.prephub.embedding.EmbeddingService;
@@ -36,6 +38,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -48,6 +51,7 @@ import java.util.stream.Collectors;
 public class BulkUploadService {
 
     private final QuestionRepository questions;
+    private final AnswerRepository answers;
     private final TopicRepository topics;
     private final UserRepository users;
     private final PortfolioRepository portfolios;
@@ -79,7 +83,7 @@ public class BulkUploadService {
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(file.getInputStream()))) {
             String headerLine = reader.readLine();
             if (headerLine == null) {
-                return new BulkUploadDtos.BulkUploadResult(0, 0, 0, List.of());
+                return new BulkUploadDtos.BulkUploadResult(0, 0, 0, 0, List.of());
             }
 
             // Parse header to find column indices (flexible ordering)
@@ -99,7 +103,8 @@ public class BulkUploadService {
                         getCol(cols, colMap, "topic_slug", getCol(cols, colMap, "topicslug", "")),
                         getCol(cols, colMap, "difficulty", "MEDIUM"),
                         getCol(cols, colMap, "tags", ""),
-                        getCol(cols, colMap, "author_username", getCol(cols, colMap, "authorusername", ""))
+                        getCol(cols, colMap, "author_username", getCol(cols, colMap, "authorusername", "")),
+                        getCol(cols, colMap, "answer", "")
                 ));
             }
         }
@@ -115,13 +120,13 @@ public class BulkUploadService {
         try (Workbook wb = new XSSFWorkbook(file.getInputStream())) {
             Sheet sheet = wb.getSheetAt(0);
             if (sheet == null) {
-                return new BulkUploadDtos.BulkUploadResult(0, 0, 0, List.of());
+                return new BulkUploadDtos.BulkUploadResult(0, 0, 0,0, List.of());
             }
 
             // Parse header row
             Row headerRow = sheet.getRow(0);
             if (headerRow == null) {
-                return new BulkUploadDtos.BulkUploadResult(0, 0, 0, List.of());
+                return new BulkUploadDtos.BulkUploadResult(0, 0, 0, 0, List.of());
             }
 
             Map<String, Integer> colMap = new HashMap<>();
@@ -142,7 +147,8 @@ public class BulkUploadService {
                         getExcelCol(row, colMap, "topic_slug", getExcelCol(row, colMap, "topicslug", "")),
                         getExcelCol(row, colMap, "difficulty", "MEDIUM"),
                         getExcelCol(row, colMap, "tags", ""),
-                        getExcelCol(row, colMap, "author_username", getExcelCol(row, colMap, "authorusername", ""))
+                        getExcelCol(row, colMap, "author_username", getExcelCol(row, colMap, "authorusername", "")),
+                        getExcelCol(row, colMap, "answer", "")
                 ));
             }
         }
@@ -253,16 +259,73 @@ public class BulkUploadService {
         return mapper.writerWithDefaultPrettyPrinter().writeValueAsString(template);
     }
 
+    // ── Validation (pre-upload dry run) ───────────────────
+
+    public BulkUploadDtos.ValidationResult validate(List<BulkUploadDtos.QuestionRow> rows) {
+        Map<String, Topic> topicMap = topics.findAll().stream()
+                .collect(Collectors.toMap(t -> t.getSlug().toLowerCase(), t -> t, (a, b) -> a));
+
+        Set<String> unknownTopics = new LinkedHashSet<>();
+        List<String> duplicateTitles = new ArrayList<>();
+        List<BulkUploadDtos.RowError> errors = new ArrayList<>();
+        int validRows = 0;
+
+        // Batch check for existing titles
+        List<String> allTitles = rows.stream()
+                .map(r -> r.title() != null ? r.title().trim().toLowerCase() : "")
+                .filter(t -> !t.isEmpty())
+                .toList();
+        Set<String> existingTitles = new HashSet<>(questions.findExistingTitles(allTitles));
+
+        for (int i = 0; i < rows.size(); i++) {
+            BulkUploadDtos.QuestionRow row = rows.get(i);
+
+            if (row.title() == null || row.title().isBlank()) {
+                errors.add(new BulkUploadDtos.RowError(i + 1, "(empty)", "Title is required"));
+                continue;
+            }
+            if (row.content() == null || row.content().isBlank()) {
+                errors.add(new BulkUploadDtos.RowError(i + 1, row.title(), "Content is required"));
+                continue;
+            }
+
+            String slug = row.topicSlug() != null ? row.topicSlug().trim().toLowerCase() : "";
+            if (slug.isEmpty() || !topicMap.containsKey(slug)) {
+                unknownTopics.add(slug.isEmpty() ? "(empty)" : row.topicSlug().trim());
+            }
+
+            if (existingTitles.contains(row.title().trim().toLowerCase())) {
+                duplicateTitles.add(row.title().trim());
+            } else {
+                validRows++;
+            }
+        }
+
+        return new BulkUploadDtos.ValidationResult(
+                rows.size(), validRows, duplicateTitles.size(),
+                unknownTopics, topicMap.keySet(),
+                duplicateTitles, errors
+        );
+    }
+
     // ── Core processing ─────────────────────────────────────
 
     private BulkUploadDtos.BulkUploadResult processRows(List<BulkUploadDtos.QuestionRow> rows, UUID uploaderId) {
         User uploader = users.findById(uploaderId).orElseThrow();
         int success = 0;
+        int skippedDuplicates = 0;
         List<BulkUploadDtos.RowError> errors = new ArrayList<>();
 
         // Pre-load topics for performance
         Map<String, Topic> topicMap = topics.findAll().stream()
                 .collect(Collectors.toMap(t -> t.getSlug().toLowerCase(), t -> t, (a, b) -> a));
+
+        // Batch check for existing titles
+        List<String> allTitles = rows.stream()
+                .map(r -> r.title() != null ? r.title().trim().toLowerCase() : "")
+                .filter(t -> !t.isEmpty())
+                .toList();
+        Set<String> existingTitles = new HashSet<>(questions.findExistingTitles(allTitles));
 
         for (int i = 0; i < rows.size(); i++) {
             BulkUploadDtos.QuestionRow row = rows.get(i);
@@ -277,12 +340,19 @@ public class BulkUploadService {
                     continue;
                 }
 
+                // Skip duplicates
+                String titleLower = row.title().trim().toLowerCase();
+                if (existingTitles.contains(titleLower)) {
+                    skippedDuplicates++;
+                    continue;
+                }
+
                 // Resolve topic
                 String slug = row.topicSlug() != null ? row.topicSlug().trim().toLowerCase() : "";
                 Topic topic = topicMap.get(slug);
                 if (topic == null) {
                     errors.add(new BulkUploadDtos.RowError(i + 1, row.title(),
-                            "Unknown topic_slug: '" + row.topicSlug() + "'. Available: " + String.join(", ", topicMap.keySet())));
+                            "Unknown topic_slug: '" + row.topicSlug() + "'"));
                     continue;
                 }
 
@@ -321,6 +391,22 @@ public class BulkUploadService {
                         .build();
                 q = questions.save(q);
 
+                // Track this title to prevent duplicates within the same batch
+                existingTitles.add(titleLower);
+
+                // Create official answer if provided
+                if (row.answer() != null && !row.answer().isBlank()) {
+                    Answer ans = Answer.builder()
+                            .question(q)
+                            .author(author)
+                            .content(row.answer().trim())
+                            .official(true)
+                            .build();
+                    answers.save(ans);
+                    q.setAnswerCount(1);
+                    questions.save(q);
+                }
+
                 // Update counters
                 topics.adjustQuestionCount(topic.getId(), 1);
                 portfolios.incrementPosts(author.getId(), 1, 2);
@@ -336,8 +422,9 @@ public class BulkUploadService {
             }
         }
 
-        log.info("Bulk upload: {} rows, {} success, {} errors", rows.size(), success, errors.size());
-        return new BulkUploadDtos.BulkUploadResult(rows.size(), success, errors.size(), errors);
+        log.info("Bulk upload: {} rows, {} success, {} duplicates skipped, {} errors",
+                rows.size(), success, skippedDuplicates, errors.size());
+        return new BulkUploadDtos.BulkUploadResult(rows.size(), success, skippedDuplicates, errors.size(), errors);
     }
 
     // ── CSV helpers ─────────────────────────────────────────

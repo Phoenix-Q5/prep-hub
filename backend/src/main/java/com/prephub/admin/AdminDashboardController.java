@@ -5,19 +5,26 @@ import com.prephub.common.SuggestionStatus;
 import com.prephub.question.QuestionRepository;
 import com.prephub.security.CurrentUser;
 import com.prephub.suggestion.SuggestionRepository;
+import com.prephub.topic.Topic;
+import com.prephub.topic.TopicRepository;
 import com.prephub.user.UserRepository;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.http.*;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 /**
  * Unified admin controller:
  *   - Dashboard stats
- *   - Bulk upload (JSON body, JSON file, CSV, Excel)
+ *   - Bulk upload with validation + duplicate detection
+ *   - Batch topic creation
  *   - Template downloads
  */
 @RestController
@@ -30,6 +37,7 @@ public class AdminDashboardController {
     private final UserRepository users;
     private final QuestionRepository questions;
     private final SuggestionRepository suggestions;
+    private final TopicRepository topicRepo;
     private final CurrentUser currentUser;
 
     // ── Dashboard stats ─────────────────────────────────────
@@ -53,6 +61,67 @@ public class AdminDashboardController {
                 "publishedQuestions", publishedQuestions,
                 "pendingSuggestions", pendingSuggestions
         );
+    }
+
+    // ── Pre-upload validation ──────────────────────────────
+
+    /**
+     * Validate a JSON upload without persisting anything.
+     * Returns unknown topics, duplicates, and errors.
+     */
+    @PostMapping("/upload/validate")
+    public ResponseEntity<BulkUploadDtos.ValidationResult> validateUpload(
+            @RequestBody BulkUploadDtos.JsonUploadRequest body) {
+        return ResponseEntity.ok(uploadService.validate(body.questions()));
+    }
+
+    /**
+     * Validate a file upload (JSON/CSV/Excel) without persisting.
+     */
+    @PostMapping(value = "/upload/validate-file", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<BulkUploadDtos.ValidationResult> validateFile(
+            @RequestParam("file") MultipartFile file) throws Exception {
+        String name = file.getOriginalFilename();
+        String ext = name != null ? name.substring(name.lastIndexOf('.') + 1).toLowerCase() : "";
+        List<BulkUploadDtos.QuestionRow> rows = switch (ext) {
+            case "json" -> {
+                var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                yield mapper.readValue(file.getInputStream(),
+                        new com.fasterxml.jackson.core.type.TypeReference<List<BulkUploadDtos.QuestionRow>>() {});
+            }
+            case "csv" -> throw new IllegalArgumentException("CSV validation: upload as JSON for now");
+            case "xlsx" -> throw new IllegalArgumentException("Excel validation: upload as JSON for now");
+            default -> throw new IllegalArgumentException("Unsupported file type: " + ext);
+        };
+        return ResponseEntity.ok(uploadService.validate(rows));
+    }
+
+    // ── Batch topic creation ────────────────────────────────
+
+    /**
+     * Create multiple topics at once (used when validation finds unknown topics).
+     */
+    @PostMapping("/topics/batch")
+    @CacheEvict(value = "topicTree", allEntries = true)
+    public ResponseEntity<BulkUploadDtos.BatchCreateTopicsResult> batchCreateTopics(
+            @Valid @RequestBody BulkUploadDtos.BatchCreateTopicsRequest request) {
+        List<String> created = new ArrayList<>();
+        for (var req : request.topics()) {
+            String slug = req.slug().trim().toLowerCase();
+            if (topicRepo.existsBySlugIgnoreCase(slug)) {
+                continue; // already exists
+            }
+            Topic topic = Topic.builder()
+                    .name(req.name())
+                    .slug(slug)
+                    .description(req.description())
+                    .colorHex(req.colorHex() != null ? req.colorHex() : "#6B7280")
+                    .featured(req.featured())
+                    .build();
+            topicRepo.save(topic);
+            created.add(slug);
+        }
+        return ResponseEntity.ok(new BulkUploadDtos.BatchCreateTopicsResult(created.size(), created));
     }
 
     // ── Bulk upload ─────────────────────────────────────────

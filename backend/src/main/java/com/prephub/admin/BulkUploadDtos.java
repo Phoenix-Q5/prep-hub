@@ -1,6 +1,5 @@
 package com.prephub.admin;
 
-import com.prephub.common.Difficulty;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
@@ -18,12 +17,14 @@ public class BulkUploadDtos {
             @NotBlank String topicSlug,
             String difficulty,      // EASY, MEDIUM, HARD — defaults to MEDIUM
             String tags,            // comma-separated, e.g. "java, collections, hashmap"
-            String authorUsername    // optional — defaults to uploader (admin)
+            String authorUsername,   // optional — defaults to uploader (admin)
+            String answer           // optional — if provided, creates an official answer
     ) {}
 
     public record BulkUploadResult(
             int totalRows,
             int successCount,
+            int skippedDuplicates,
             int errorCount,
             List<RowError> errors
     ) {}
@@ -34,8 +35,34 @@ public class BulkUploadDtos {
             String error
     ) {}
 
-    /**
-     * For JSON array upload — the body is just a list of QuestionRow.
-     */
     public record JsonUploadRequest(List<QuestionRow> questions) {}
+
+    // ── Validation (pre-upload check) ──────────────────────
+
+    public record ValidationResult(
+            int totalRows,
+            int validRows,
+            int duplicateRows,
+            Set<String> unknownTopics,
+            Set<String> availableTopics,
+            List<String> duplicateTitles,
+            List<RowError> errors
+    ) {}
+
+    // ── Batch topic creation ───────────────────────────────
+
+    public record CreateTopicRequest(
+            @NotBlank String name,
+            @NotBlank String slug,
+            String description,
+            String colorHex,
+            boolean featured
+    ) {}
+
+    public record BatchCreateTopicsRequest(List<CreateTopicRequest> topics) {}
+
+    public record BatchCreateTopicsResult(
+            int created,
+            List<String> slugs
+    ) {}
 }
